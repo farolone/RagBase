@@ -1,0 +1,63 @@
+[project]
+name = "rag"
+version = "0.1.0"
+description = "Self-hosted RAG system for 50-100K multilingual documents"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+storage = [
+    "qdrant-client>=1.12",
+    "neo4j>=5.0",
+    "psycopg[binary]>=3.0",
+    "sqlalchemy>=2.0",
+]
+ingestion = [
+    "docling>=2.0",
+    "pymupdf4llm>=0.0.10",
+    "youtube-transcript-api>=0.6",
+    "trafilatura>=1.0",
+    "praw>=7.0",
+]
+processing = [
+    "sentence-transformers>=3.0",
+    "FlagEmbedding>=1.0",
+    "spacy>=3.7",
+    "gliner>=0.2",
+    "bertopic>=0.16",
+]
+retrieval = [
+    "llama-index>=0.11",
+]
+generation = [
+    "ollama>=0.4",
+]
+pipeline = [
+    "prefect>=3.0",
+]
+api = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+]
+cli = [
+    "typer>=0.12",
+    "rich>=13.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.8",
+]
+all = [
+    "rag[storage,ingestion,processing,retrieval,generation,pipeline,api,cli,dev]",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
