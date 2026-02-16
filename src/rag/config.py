@@ -19,12 +19,13 @@ class Settings(BaseSettings):
     postgres_user: str = "rag"
     postgres_password: str = "changeme"
 
-    # Ollama (Mac Studio Ultra im LAN)
-    ollama_host: str = "192.168.178.y"
-    ollama_port: int = 11434
-    ollama_model_rag: str = "qwen2.5:72b-instruct-q8_0"
-    ollama_model_agent: str = "minimax-m2.5:q4_K_M"
-    ollama_model_reranker: str = "qwen3-reranker:8b"
+    # LLM (OpenAI-compatible API on Mac Studio Ultra)
+    llm_base_url: str = "http://192.168.178.8:54321/v1"
+    llm_model_rag: str = "mlx-community/MiniMax-M2.5-8bit"
+    llm_model_agent: str = "mlx-community/MiniMax-M2.5-8bit"
+    llm_model_reranker: str = ""
+    llm_timeout: float = 120.0
+    llm_max_retries: int = 3
 
     # Embedding
     embedding_model: str = "BAAI/bge-m3"

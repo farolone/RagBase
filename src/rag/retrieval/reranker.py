@@ -1,15 +1,16 @@
 import httpx
+import time
 
 from rag.config import settings
 from rag.storage.qdrant import SearchResult
 
 
 class Reranker:
-    """Reranks search results using Qwen3-Reranker via Ollama API."""
+    """Reranks search results using LLM-based scoring via OpenAI-compatible API."""
 
-    def __init__(self, model: str | None = None, host: str | None = None):
-        self.model = model or settings.ollama_model_reranker
-        self.host = host or f"http://{settings.ollama_host}:{settings.ollama_port}"
+    def __init__(self, model: str | None = None, base_url: str | None = None):
+        self.model = model or settings.llm_model_reranker
+        self.base_url = (base_url or settings.llm_base_url).rstrip("/")
 
     def rerank(
         self,
@@ -19,6 +20,10 @@ class Reranker:
     ) -> list[SearchResult]:
         if not results:
             return []
+
+        # Skip reranking if no reranker model configured
+        if not self.model:
+            return results[:top_k]
 
         scored = []
         for result in results:
@@ -38,18 +43,18 @@ class Reranker:
 
         try:
             response = httpx.post(
-                f"{self.host}/api/generate",
+                f"{self.base_url}/chat/completions",
                 json={
                     "model": self.model,
-                    "prompt": prompt,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0,
+                    "max_tokens": 10,
                     "stream": False,
-                    "options": {"temperature": 0.0, "num_predict": 10},
                 },
                 timeout=30.0,
             )
             response.raise_for_status()
-            text = response.json().get("response", "0").strip()
-            # Extract first number from response
+            text = response.json()["choices"][0]["message"]["content"].strip()
             for token in text.split():
                 try:
                     return float(token)
