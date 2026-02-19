@@ -37,6 +37,15 @@ class Settings(BaseSettings):
     chunk_size_grandparent: int = 2048
     chunk_overlap: int = 50
 
+    # YouTube
+    youtube_api_key: str = ""
+
+    # Reddit
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_username: str = ""
+    reddit_password: str = ""
+
     model_config = {"env_file": ".env", "env_prefix": ""}
 
 

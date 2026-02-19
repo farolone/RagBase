@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Chat — Wissensdatenbank{% endblock %}
+{% block page_title %}Chat{% endblock %}
+
+{% block content %}
+<div x-data="chatApp()" x-init="init()" class="flex gap-4 h-[calc(100vh-8rem)]">
+    <!-- Sessions sidebar -->
+    <div class="w-56 flex-shrink-0 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex flex-col">
+        <div class="p-3 border-b border-gray-200 dark:border-gray-700">
+            <button @click="newSession()" class="w-full px-3 py-2 bg-primary-600 text-white rounded-lg text-sm hover:bg-primary-700 flex items-center justify-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                Neuer Chat
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-1">
+            <template x-for="s in sessions" :key="s.id">
+                <div @click="loadSession(s.id)"
+                     class="px-3 py-2 rounded-lg text-sm cursor-pointer flex items-center justify-between group"
+                     :class="currentSession === s.id ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700'">
+                    <span class="truncate" x-text="s.title"></span>
+                    <button @click.stop="deleteSession(s.id)" class="hidden group-hover:block text-gray-400 hover:text-red-500">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Chat area -->
+    <div class="flex-1 flex flex-col bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+        <!-- Messages -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-6" x-ref="messages">
+            <div x-show="messages.length === 0" class="text-center py-16">
+                <svg class="w-16 h-16 mx-auto text-gray-300 dark:text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                <p class="text-gray-500 dark:text-gray-400 text-lg">Stelle eine Frage an deine Wissensdatenbank</p>
+            </div>
+
+            <template x-for="(msg, i) in messages" :key="i">
+                <div :class="msg.role === 'user' ? 'flex justify-end' : ''">
+                    <div :class="msg.role === 'user' ? 'bg-primary-600 text-white rounded-2xl rounded-br-sm px-4 py-3 max-w-2xl' : 'max-w-3xl'">
+                        <template x-if="msg.role === 'user'">
+                            <p x-text="msg.content"></p>
+                        </template>
+                        <template x-if="msg.role === 'assistant'">
+                            <div>
+                                <div class="prose dark:prose-invert prose-sm max-w-none" x-html="renderMarkdown(msg.content)"></div>
+                                <!-- Sources -->
+                                <div x-show="msg.sources && msg.sources.length > 0" class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                                    <p class="text-xs font-semibold text-gray-500 mb-2">Quellen</p>
+                                    <div class="flex flex-wrap gap-2">
+                                        <template x-for="src in (msg.sources || [])" :key="src.ref">
+                                            <a :href="src.source_url || ('/documents/' + src.document_id)" target="_blank"
+                                               class="inline-flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer"
+                                               @mouseenter="showSource = src" @mouseleave="showSource = null">
+                                                <span class="font-medium text-primary-600 dark:text-primary-400" x-text="'[' + src.ref + ']'"></span>
+                                                <span class="truncate max-w-32" x-text="src.title || src.platform || 'Source'"></span>
+                                            </a>
+                                        </template>
+                                    </div>
+                                </div>
+                                <!-- Feedback -->
+                                <div class="mt-2 flex items-center gap-2">
+                                    <button @click="sendFeedback(msg, 1)" class="text-gray-400 hover:text-green-500 p-1" title="Hilfreich">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"/></svg>
+                                    </button>
+                                    <button @click="sendFeedback(msg, -1)" class="text-gray-400 hover:text-red-500 p-1" title="Nicht hilfreich">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Streaming indicator -->
+            <div x-show="streaming" class="flex items-center gap-2 text-gray-400">
+                <div class="flex gap-1">
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input -->
+        <div class="p-4 border-t border-gray-200 dark:border-gray-700">
+            <div class="flex gap-3">
+                <input type="text" x-model="question" @keydown.enter="ask()" :disabled="streaming"
+                       placeholder="Stelle eine Frage..."
+                       class="flex-1 px-4 py-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none">
+                <button @click="ask()" :disabled="streaming || !question.trim()"
+                        class="px-6 py-3 bg-primary-600 text-white rounded-xl hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Source preview popover -->
+    <div x-show="showSource" x-transition
+         class="fixed bottom-24 right-8 w-96 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-40">
+        <template x-if="showSource">
+            <div>
+                <p class="text-xs font-semibold text-gray-500 mb-1" x-text="'Quelle [' + showSource.ref + ']'"></p>
+                <p class="text-sm text-gray-700 dark:text-gray-300 line-clamp-6" x-text="showSource.content_preview"></p>
+                <a x-show="showSource.source_url" :href="showSource.source_url" target="_blank"
+                   class="text-xs text-primary-500 hover:text-primary-600 mt-2 inline-block">Original ansehen</a>
+            </div>
+        </template>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/chat.js"></script>
+{% endblock %}

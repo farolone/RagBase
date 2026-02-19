@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Collections — Wissensdatenbank{% endblock %}
+{% block page_title %}Collections{% endblock %}
+
+{% block content %}
+<div x-data="collectionsApp()" x-init="load()">
+    <!-- Create modal -->
+    <div x-show="showCreate" x-transition class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" @click.self="showCreate = false">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-md" @click.stop>
+            <h2 class="text-lg font-semibold mb-4">Neue Collection</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-sm font-medium mb-1 block">Name</label>
+                    <input type="text" x-model="newColl.name" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-sm">
+                </div>
+                <div>
+                    <label class="text-sm font-medium mb-1 block">Beschreibung</label>
+                    <textarea x-model="newColl.description" rows="3" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-sm"></textarea>
+                </div>
+                <div>
+                    <label class="text-sm font-medium mb-1 block">Farbe</label>
+                    <input type="color" x-model="newColl.color" class="h-10 w-20 cursor-pointer rounded">
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button @click="showCreate = false" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">Abbrechen</button>
+                <button @click="create()" class="px-4 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">Erstellen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <p class="text-gray-500">Wissensgebiete organisieren und durchsuchen</p>
+        <button @click="showCreate = true" class="px-3 py-1.5 bg-primary-600 text-white rounded-lg text-sm hover:bg-primary-700 flex items-center gap-1.5">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Neue Collection
+        </button>
+    </div>
+
+    <!-- Collection grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <template x-for="c in collections" :key="c.id">
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 hover:shadow-md transition-shadow cursor-pointer"
+                 @click="window.location.href = '/collections/' + c.id">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="w-4 h-4 rounded-full" :style="`background-color: ${c.color}`"></div>
+                    <h3 class="font-semibold" x-text="c.name"></h3>
+                </div>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4 line-clamp-2" x-text="c.description || 'Keine Beschreibung'"></p>
+                <div class="flex items-center justify-between text-sm">
+                    <span class="text-gray-400"><span x-text="c.doc_count || 0"></span> Dokumente</span>
+                    <div class="flex gap-2">
+                        <a :href="'/search?collection=' + c.id" @click.stop class="text-primary-500 hover:text-primary-600">Suchen</a>
+                        <a :href="'/chat?collection=' + c.id" @click.stop class="text-primary-500 hover:text-primary-600">Chat</a>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <div x-show="collections.length === 0 && !loading" class="text-center py-16">
+        <p class="text-gray-500 text-lg mb-2">Noch keine Collections erstellt</p>
+        <p class="text-gray-400 text-sm">Collections helfen dir, Wissen thematisch zu organisieren</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function collectionsApp() {
+    return {
+        collections: [],
+        loading: false,
+        showCreate: false,
+        newColl: { name: '', description: '', color: '#3B82F6' },
+        async load() {
+            this.loading = true;
+            try {
+                const resp = await fetch('/api/collections');
+                const data = await resp.json();
+                this.collections = data.collections;
+            } catch (e) { showToast('Fehler beim Laden', 'error'); }
+            this.loading = false;
+        },
+        async create() {
+            if (!this.newColl.name.trim()) return;
+            try {
+                await fetch('/api/collections', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.newColl),
+                });
+                this.showCreate = false;
+                this.newColl = { name: '', description: '', color: '#3B82F6' };
+                this.load();
+                showToast('Collection erstellt');
+            } catch (e) { showToast('Fehler', 'error'); }
+        }
+    }
+}
+</script>
+{% endblock %}

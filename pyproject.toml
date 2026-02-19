@@ -20,6 +20,7 @@ storage = [
 ingestion = [
     "docling>=2.0",
     "pymupdf4llm>=0.0.10",
+    "ebooklib>=0.18",
     "youtube-transcript-api>=0.6",
     "trafilatura>=1.0",
     "praw>=7.0",

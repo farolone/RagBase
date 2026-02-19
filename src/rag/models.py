@@ -11,6 +11,7 @@ class Platform(str, Enum):
     REDDIT = "reddit"
     WEB = "web"
     PDF = "pdf"
+    DOCUMENT = "document"
 
 
 class Document(BaseModel):

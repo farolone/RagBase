@@ -20,10 +20,9 @@ LXC Container "rag" (192.168.178.182)
         | LAN (REST API)
         |
 Mac Studio Ultra (512GB RAM)
-  Ollama API :11434
-    Qwen 2.5-72B Q8     (~75GB)   Kern-RAG
-    MiniMax M2.5 Q4      (~138GB)  Agent/Router
-    Qwen3-Reranker-8B    (~10GB)   Reranking
+  OpenAI-kompatible API :54321 (LM Studio / mlx-server)
+    MiniMax M2.5 8bit    (~138GB)  RAG + Agent
+    Spaeter: Qwen 2.5-72B, Qwen3-Reranker
 ```
 
 ---
@@ -94,11 +93,17 @@ src/rag/
     graph_builder.py # NER + Topics -> Neo4j
   retrieval/
     hybrid.py        # BGE-M3 Embed -> Qdrant Search
-    reranker.py      # Qwen3-Reranker via Ollama API
+    reranker.py      # Qwen3-Reranker (deaktiviert bis Modell geladen)
   generation/
-    llm.py           # Ollama REST Client
-    router.py        # Query Router (einfach->Qwen, komplex->MiniMax)
+    llm.py           # OpenAI-kompatibler LLM Client (mit Retry-Logik)
+    router.py        # Query Router
     citation.py      # Citation-aware Antworten mit [1], [2] Referenzen
+  pipeline/
+    sources.py       # YAML-Parser fuer sources.yaml
+    dedup.py         # URL-Dedup gegen PostgreSQL
+    tasks.py         # Prefect Tasks (Web, YouTube, Reddit, Twitter)
+    flows.py         # Prefect Flow (daily-ingestion)
+    deploy.py        # Prefect Deployment + Worker
   cli.py             # Typer CLI
   api.py             # FastAPI REST API
 ```
@@ -117,112 +122,42 @@ src/rag/
 
 ## Fehlende Schritte
 
-### Schritt 1: Ollama auf dem Mac Studio einrichten
+### Schritt 1: LLM auf Mac Studio einrichten [ERLEDIGT]
 
-Voraussetzung: Ollama muss installiert sein. Falls nicht:
+MiniMax M2.5 (8bit) laeuft via LM Studio auf dem Mac Studio (.8), Port 54321.
+OpenAI-kompatible API unter: `http://192.168.178.8:54321/v1`
 
-```bash
-# Auf dem Mac Studio
-brew install ollama
-```
+Spaeter geplant: Qwen 2.5-72B (RAG) + Qwen3-Reranker via LM Studio.
 
-**1a. Ollama so konfigurieren, dass es im LAN erreichbar ist:**
+### Schritt 2: .env Datei konfigurieren [ERLEDIGT]
 
-```bash
-# Auf dem Mac Studio
-# Ollama muss auf 0.0.0.0 lauschen statt nur localhost
-launchctl setenv OLLAMA_HOST 0.0.0.0
-
-# Ollama neu starten
-brew services restart ollama
-# oder: ollama serve
-```
-
-Verifizieren:
-
-```bash
-# Vom LXC Container aus
-curl http://<MAC-STUDIO-IP>:11434/api/tags
-```
-
-**1b. Modelle herunterladen:**
-
-```bash
-# Auf dem Mac Studio
-# Kern-RAG Modell (~75GB, Q8 Quantisierung)
-ollama pull qwen2.5:72b-instruct-q8_0
-
-# Reranker (~10GB)
-ollama pull qwen3-reranker:8b
-
-# MiniMax laeuft bereits - pruefen:
-ollama list | grep minimax
-```
-
-Hinweis: Der Download von Qwen 2.5-72B dauert je nach Internetverbindung
-30-60 Minuten. Das Modell belegt ~75GB RAM beim Laden.
-
-**1c. RAM-Budget pruefen:**
-
-| Modell | RAM |
-|--------|-----|
-| Qwen 2.5-72B Q8 | ~75 GB |
-| MiniMax M2.5 Q4 | ~138 GB |
-| Qwen3-Reranker-8B | ~10 GB |
-| **Gesamt (alle gleichzeitig)** | **~223 GB** |
-| **Verfuegbar (Mac Studio 512GB)** | **~300 GB frei** |
-
-Ollama laedt Modelle bei Bedarf in den RAM und entlaedt sie nach Inaktivitaet.
-Im Normalbetrieb sind nicht alle Modelle gleichzeitig geladen.
-
-### Schritt 2: .env Datei konfigurieren
-
-```bash
-# Auf dem LXC Container
-ssh root@192.168.178.182
-cd /root/rag
-
-# .env aus .env.example erstellen
-cp .env.example .env
-
-# Die Mac Studio IP eintragen
-nano .env
-```
-
-**Mindestens diese Werte anpassen:**
+.env erstellt aus .env.example. Konfigurierte Werte:
 
 ```env
-# Die tatsaechliche IP des Mac Studio eintragen
-OLLAMA_HOST=192.168.178.XXX
-
-# Falls die Ollama-Modellnamen anders sind, anpassen:
-OLLAMA_MODEL_RAG=qwen2.5:72b-instruct-q8_0
-OLLAMA_MODEL_AGENT=minimax-m2.5:q4_K_M
-OLLAMA_MODEL_RERANKER=qwen3-reranker:8b
+LLM_BASE_URL=http://192.168.178.8:54321/v1
+LLM_MODEL_RAG=mlx-community/MiniMax-M2.5-8bit
+LLM_MODEL_AGENT=mlx-community/MiniMax-M2.5-8bit
+LLM_MODEL_RERANKER=
 ```
 
-### Schritt 3: Netzwerk-Konnektivitaet testen
+### Schritt 3: Netzwerk-Konnektivitaet testen [ERLEDIGT]
 
 ```bash
-# Auf dem LXC Container
+# OpenAI-kompatible API erreichbar?
+curl -s http://192.168.178.8:54321/v1/models | python3 -m json.tool
 
-# Ollama API erreichbar?
-curl -s http://<MAC-STUDIO-IP>:11434/api/tags | python3 -m json.tool
+# Chat-Completion Test
+curl -s http://192.168.178.8:54321/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mlx-community/MiniMax-M2.5-8bit","messages":[{"role":"user","content":"Sag Hallo"}],"max_tokens":20}'
 
-# Modell-Test (sollte eine Antwort generieren)
-curl -s http://<MAC-STUDIO-IP>:11434/api/generate \
-  -d '{"model": "qwen2.5:72b-instruct-q8_0", "prompt": "Hallo, antworte kurz.", "stream": false}' \
-  | python3 -m json.tool
-
-# Automatischer Test via RAG-Code
-cd /root/rag
-source .venv/bin/activate
+# Test via RAG-Code
+cd /root/rag && source .venv/bin/activate
 python -c "
-from rag.generation.llm import OllamaClient
-client = OllamaClient()
-print('Ollama erreichbar:', client.is_available())
-print('Qwen verfuegbar:', client.is_available('qwen2.5'))
-print('MiniMax verfuegbar:', client.is_available('minimax'))
+from rag.generation.llm import LLMClient
+client = LLMClient()
+print('LLM erreichbar:', client.is_available())
+print('MiniMax verfuegbar:', client.is_available('MiniMax'))
 "
 ```
 
@@ -261,7 +196,7 @@ Dann beim Erstellen des TwitterIngestor den Pfad angeben:
 ingestor = TwitterIngestor(cookies_path="twitter_cookies.json")
 ```
 
-### Schritt 6: End-to-End Test mit echten Daten
+### Schritt 6: End-to-End Test mit echten Daten [ERLEDIGT]
 
 ```bash
 cd /root/rag
@@ -279,14 +214,14 @@ python -m rag.cli ingest "https://www.youtube.com/watch?v=VIDEO_ID"
 # 4. Suchen
 python -m rag.cli search "Was ist die Hauptstadt von Deutschland?"
 
-# 5. Frage stellen (benoetigt Ollama-Verbindung)
+# 5. Frage stellen (benoetigt LLM auf Mac Studio)
 python -m rag.cli ask "Was weisst du ueber Berlin?"
 
 # 6. Statistiken
 python -m rag.cli stats
 ```
 
-### Schritt 7: FastAPI Server starten (optional)
+### Schritt 7: FastAPI Server starten [ERLEDIGT]
 
 ```bash
 cd /root/rag
@@ -311,19 +246,61 @@ uvicorn rag.api:app --host 0.0.0.0 --port 8000
 | POST | `/ask` | Frage mit Citations (`{"question": "...", "platform": null}`) |
 | GET | `/stats` | Systemstatistiken |
 
-### Schritt 8: Prefect Pipeline fuer taegliche Ingestion (noch nicht implementiert)
+### Schritt 8: Prefect Pipeline fuer taegliche Ingestion [ERLEDIGT]
 
-Wenn gewuenscht, wird ein Prefect Flow erstellt der:
-- Konfigurierte Quellen taeglich abfragt (YouTube-Kanaele, Subreddits, Webseiten)
-- Neue Dokumente automatisch ingestiert
-- Fehler protokolliert, ohne andere Quellen zu blockieren
+Prefect 3.6 installiert. Taeglich um 06:00 Uhr laeuft der `daily-ingestion` Flow.
+
+**Quellen (konfiguriert in `sources.yaml`):**
+
+- **Web:** Feste URL-Liste
+- **YouTube:** Watch Later Playlist + gespeicherte Playlists (benoetigt OAuth)
+- **Reddit:** Gespeicherte Posts des Users (benoetigt Credentials)
+- **Twitter/X:** Gebookmarkte Tweets (benoetigt Cookies)
+
+**Dedup:** URL-Check gegen PostgreSQL -- bereits ingestierte URLs werden uebersprungen.
+
+**Graceful Skip:** Fehlende Credentials fuehren nicht zu Fehlern, die Quelle wird uebersprungen.
+
+**Module:**
+
+```
+src/rag/pipeline/
+  sources.py    # YAML-Parser, Dataclasses (WebSource, YouTubeConfig, etc.)
+  dedup.py      # URL-Dedup via PostgreSQL
+  tasks.py      # Prefect Tasks (ingest_web_url, fetch_reddit_saved, etc.)
+  flows.py      # Haupt-Flow daily_ingestion
+  deploy.py     # Deployment mit Cron-Schedule
+```
+
+**Starten:**
 
 ```bash
-# Prefect installieren
-cd /root/rag
-source /root/.local/bin/env
-uv pip install prefect
+# Prefect Server (Web-UI auf Port 4200)
+tmux new -s prefect
+export PATH=/root/.local/bin:$PATH
+source .venv/bin/activate
+prefect server start --host 0.0.0.0
+
+# Pipeline Worker (fuehrt Flows aus)
+tmux new -s pipeline
+export PATH=/root/.local/bin:$PATH
+source .venv/bin/activate
+PREFECT_API_URL=http://localhost:4200/api python -m rag.pipeline.deploy
 ```
+
+**Manueller Flow-Run:**
+
+```bash
+PREFECT_API_URL=http://localhost:4200/api prefect deployment run daily-ingestion/daily-ingestion
+```
+
+**Web-UI:** http://192.168.178.182:4200
+
+**Noch offen fuer volle Funktionalitaet:**
+
+- YouTube: `google-api-python-client` installieren + OAuth Credentials
+- Reddit: `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` in .env
+- Twitter: Cookies-Datei unter `/root/rag/twitter_cookies.json`
 
 ---
 
@@ -345,18 +322,26 @@ docker compose down        # stoppen (Daten bleiben erhalten)
 
 ### tmux Sessions
 
+**Laufende Sessions:**
+
+| Session | Dienst | Port |
+|---------|--------|------|
+| `api` | FastAPI Server | 8000 |
+| `prefect` | Prefect Server (Web-UI) | 4200 |
+| `pipeline` | Pipeline Worker (Cron) | -- |
+
 ```bash
-# Neue Session starten
-tmux new -s rag
+# Alle Sessions anzeigen
+tmux ls
+
+# Zu einer Session wechseln
+tmux attach -t api
 
 # Session verlassen (laeuft weiter)
 # Ctrl+B, dann D
 
-# Zurueck zur Session
-tmux attach -t rag
-
-# Alle Sessions anzeigen
-tmux ls
+# Neue Session starten
+tmux new -s <name>
 ```
 
 ### Claude Code auf dem Container
@@ -437,8 +422,8 @@ pg_isready -h localhost -p 5432 -U rag
 2. **Twitter/X fragil:** Twikit nutzt Reverse-Engineering der X-API. Kann jederzeit brechen.
    Gutes Error-Handling ist implementiert, aber Ausfaelle sind zu erwarten.
 
-3. **Ollama-Abhaengigkeit:** Frage-Antwort (`ask`) und Reranking benoetigen laufendes Ollama
-   auf dem Mac Studio. Ingestion und Suche funktionieren unabhaengig davon.
+3. **LLM-Abhaengigkeit:** Frage-Antwort (`ask`) benoetigt laufendes LLM (MiniMax M2.5)
+   auf dem Mac Studio (.8:54321). Ingestion und Suche funktionieren unabhaengig davon.
 
 4. **Keine GPU im LXC:** NER und Topic Modeling laufen auf CPU. Fuer den geplanten
    Dokumentenumfang (50-100K) ist das ausreichend, dauert aber bei Erstverarbeitung.
@@ -455,6 +440,7 @@ ssh root@192.168.178.182
 
 # Projekt aktivieren
 cd /root/rag && source .venv/bin/activate
+export PATH=/root/.local/bin:$PATH
 
 # CLI Befehle
 python -m rag.cli ingest <quelle>        # PDF/URL/YouTube ingesten
@@ -464,6 +450,10 @@ python -m rag.cli stats                   # Systemstatistiken
 
 # API starten
 uvicorn rag.api:app --host 0.0.0.0 --port 8000
+
+# Prefect
+prefect server start --host 0.0.0.0      # Server (Port 4200)
+PREFECT_API_URL=http://localhost:4200/api python -m rag.pipeline.deploy  # Worker
 
 # Tests
 pytest -v -m "not network"

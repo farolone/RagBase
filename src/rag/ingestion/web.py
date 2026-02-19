@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import trafilatura
 
 from rag.ingestion.base import BaseIngestor
@@ -37,11 +39,15 @@ class WebIngestor(BaseIngestor):
         author = meta.author if meta else None
         date = meta.date if meta else None
 
+        # Parse published_at from date string
+        published_at = self._parse_date(date)
+
         doc = Document(
             title=title,
             source_url=source,
             platform=Platform.WEB,
             author=author,
+            created_at=published_at,
             metadata={
                 "domain": source.split("//")[-1].split("/")[0] if "//" in source else "",
                 "date": date,
@@ -55,3 +61,12 @@ class WebIngestor(BaseIngestor):
         )
 
         return doc, chunks
+
+    @staticmethod
+    def _parse_date(date_str: str | None) -> datetime | None:
+        if not date_str:
+            return None
+        try:
+            return datetime.strptime(date_str[:10], "%Y-%m-%d")
+        except (ValueError, IndexError):
+            return None

@@ -1,4 +1,6 @@
 import time
+from collections.abc import AsyncIterator
+
 import httpx
 
 from rag.config import settings
@@ -57,6 +59,55 @@ class LLMClient:
             payload["tools"] = tools
 
         return self._request("/chat/completions", payload, timeout)
+
+    async def stream_generate(
+        self,
+        prompt: str,
+        model: str | None = None,
+        system: str | None = None,
+        temperature: float = 0.1,
+        max_tokens: int = 2048,
+        timeout: float | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream tokens from the LLM using SSE. Yields content strings."""
+        model = model or settings.llm_model_rag
+        timeout = timeout or settings.llm_timeout
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                import json
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
 
     def is_available(self, model: str | None = None) -> bool:
         try:

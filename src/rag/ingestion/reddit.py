@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import praw
 
 from rag.ingestion.base import BaseIngestor
@@ -28,6 +30,7 @@ class RedditIngestor(BaseIngestor):
             source_url=source,
             platform=Platform.REDDIT,
             author=str(submission.author) if submission.author else None,
+            created_at=datetime.fromtimestamp(submission.created_utc, tz=timezone.utc),
             metadata={
                 "subreddit": str(submission.subreddit),
                 "score": submission.score,

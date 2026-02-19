@@ -1,0 +1,111 @@
+/* Wissensdatenbank Custom Styles */
+
+[x-cloak] { display: none !important; }
+
+/* Navigation links */
+.nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: 0.5rem;
+    color: #4B5563;
+    transition: all 0.15s;
+}
+.dark .nav-link {
+    color: #9CA3AF;
+}
+.nav-link:hover {
+    background-color: #F3F4F6;
+    color: #111827;
+}
+.dark .nav-link:hover {
+    background-color: #374151;
+    color: #E5E7EB;
+}
+.nav-link.active {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+}
+.dark .nav-link.active {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: #93C5FD;
+}
+
+/* Line clamp */
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.line-clamp-4 {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.line-clamp-6 {
+    display: -webkit-box;
+    -webkit-line-clamp: 6;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb {
+    background: #4b5563;
+}
+
+/* Prose for chat markdown */
+.prose pre {
+    background-color: #F3F4F6;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    overflow-x: auto;
+}
+.dark .prose pre {
+    background-color: #111827;
+}
+.prose code {
+    background-color: #F3F4F6;
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+}
+.dark .prose code {
+    background-color: #111827;
+}
+.prose pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+/* Toast animations */
+.toast-enter {
+    animation: slideIn 0.3s ease-out;
+}
+.toast-exit {
+    animation: slideOut 0.3s ease-in;
+}
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}

@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Collection — Wissensdatenbank{% endblock %}
+{% block page_title %}Collection{% endblock %}
+
+{% block content %}
+<div x-data="collectionDetail('{{ collection_id }}')" x-init="load()">
+    <a href="/collections" class="text-sm text-primary-500 hover:text-primary-600 mb-4 inline-flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Zurück
+    </a>
+
+    <!-- Header -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6" x-show="collection">
+        <div class="flex items-start justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-6 h-6 rounded-full" :style="`background-color: ${collection?.color}`"></div>
+                <div>
+                    <h2 class="text-2xl font-bold" x-text="collection?.name"></h2>
+                    <p class="text-gray-500 mt-1" x-text="collection?.description || 'Keine Beschreibung'"></p>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <a :href="'/search?collection=' + '{{ collection_id }}'" class="px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">Suchen</a>
+                <a :href="'/chat?collection=' + '{{ collection_id }}'" class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">Chat</a>
+                <button @click="showEdit = true" class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">Bearbeiten</button>
+                <button @click="deleteCollection()" class="px-3 py-1.5 text-sm text-red-600 border border-red-300 dark:border-red-700 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20">Löschen</button>
+            </div>
+        </div>
+        <p class="text-sm text-gray-400 mt-3"><span x-text="collection?.doc_count || 0"></span> Dokumente</p>
+    </div>
+
+    <!-- Edit modal -->
+    <div x-show="showEdit" x-transition class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" @click.self="showEdit = false">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-md" @click.stop>
+            <h2 class="text-lg font-semibold mb-4">Collection bearbeiten</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-sm font-medium mb-1 block">Name</label>
+                    <input type="text" x-model="editData.name" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-sm">
+                </div>
+                <div>
+                    <label class="text-sm font-medium mb-1 block">Beschreibung</label>
+                    <textarea x-model="editData.description" rows="3" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-sm"></textarea>
+                </div>
+                <div>
+                    <label class="text-sm font-medium mb-1 block">Farbe</label>
+                    <input type="color" x-model="editData.color" class="h-10 w-20 cursor-pointer rounded">
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button @click="showEdit = false" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">Abbrechen</button>
+                <button @click="saveEdit()" class="px-4 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add documents modal -->
+    <div x-show="showAddDocs" x-transition class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" @click.self="showAddDocs = false">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-2xl max-h-[80vh] flex flex-col" @click.stop>
+            <h2 class="text-lg font-semibold mb-4">Dokumente hinzufügen</h2>
+            <input type="text" x-model="docSearch" @input.debounce.300ms="searchDocs()" placeholder="Dokumente durchsuchen..."
+                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-sm mb-4">
+            <div class="flex-1 overflow-y-auto space-y-1">
+                <template x-for="doc in availableDocs" :key="doc.id">
+                    <div class="flex items-center justify-between px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/30 rounded-lg">
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium text-sm truncate" x-text="doc.title"></p>
+                            <p class="text-xs text-gray-400" x-text="doc.platform + (doc.author ? ' · ' + doc.author : '')"></p>
+                        </div>
+                        <button @click="addDoc(doc.id)" class="ml-3 px-3 py-1 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex-shrink-0">
+                            Hinzufügen
+                        </button>
+                    </div>
+                </template>
+                <div x-show="availableDocs.length === 0" class="text-center py-8 text-gray-500 text-sm">
+                    Keine weiteren Dokumente verfügbar
+                </div>
+            </div>
+            <div class="flex justify-end mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <button @click="showAddDocs = false" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document list -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 class="font-semibold">Dokumente</h3>
+            <button @click="showAddDocs = true; searchDocs()" class="px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                Hinzufügen
+            </button>
+        </div>
+        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+            <template x-for="doc in documents" :key="doc.id">
+                <div class="flex items-center justify-between px-6 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                    <a :href="'/documents/' + doc.id" class="flex items-center gap-3 flex-1 min-w-0">
+                        <img x-show="ytThumbnail(doc.source_url)" :src="ytThumbnail(doc.source_url)"
+                             class="w-16 h-9 object-cover rounded flex-shrink-0 bg-gray-100 dark:bg-gray-700"
+                             @error="$el.style.display='none'" loading="lazy">
+                        <div class="min-w-0">
+                            <p class="font-medium truncate" x-text="doc.title"></p>
+                            <p class="text-sm text-gray-500" x-text="doc.platform + (doc.author ? ' · ' + doc.author : '') + ' · ' + (doc.chunk_count || 0) + ' Chunks'"></p>
+                        </div>
+                    </a>
+                    <button @click="removeDoc(doc.id)" class="text-gray-400 hover:text-red-500 p-1 ml-3" title="Entfernen">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </template>
+        </div>
+        <div x-show="documents.length === 0" class="p-8 text-center text-gray-500">Keine Dokumente in dieser Collection</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function ytThumbnail(url) {
+    if (!url) return null;
+    const m = url.match(/[?&]v=([^&]+)/);
+    return m ? `https://img.youtube.com/vi/${m[1]}/mqdefault.jpg` : null;
+}
+
+function collectionDetail(collId) {
+    return {
+        collection: null,
+        documents: [],
+        showEdit: false,
+        showAddDocs: false,
+        editData: { name: '', description: '', color: '#3B82F6' },
+        availableDocs: [],
+        docSearch: '',
+        async load() {
+            const resp = await fetch(`/api/collections/${collId}`);
+            this.collection = await resp.json();
+            this.editData = {
+                name: this.collection.name,
+                description: this.collection.description || '',
+                color: this.collection.color || '#3B82F6',
+            };
+            const docsResp = await fetch(`/api/documents?collection_id=${collId}&limit=200`);
+            const docsData = await docsResp.json();
+            this.documents = docsData.documents;
+        },
+        async saveEdit() {
+            await fetch(`/api/collections/${collId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.editData),
+            });
+            this.showEdit = false;
+            this.load();
+            showToast('Collection aktualisiert');
+        },
+        async searchDocs() {
+            const params = new URLSearchParams({ limit: '50' });
+            if (this.docSearch) params.set('search', this.docSearch);
+            const resp = await fetch('/api/documents?' + params);
+            const data = await resp.json();
+            const existingIds = new Set(this.documents.map(d => d.id));
+            this.availableDocs = data.documents.filter(d => !existingIds.has(d.id));
+        },
+        async addDoc(docId) {
+            await fetch(`/api/collections/${collId}/documents`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ document_id: docId }),
+            });
+            this.availableDocs = this.availableDocs.filter(d => d.id !== docId);
+            this.load();
+            showToast('Dokument hinzugefügt');
+        },
+        async removeDoc(docId) {
+            await fetch(`/api/collections/${collId}/documents/${docId}`, { method: 'DELETE' });
+            this.load();
+            showToast('Dokument entfernt');
+        },
+        async deleteCollection() {
+            if (!confirm('Collection wirklich löschen?')) return;
+            await fetch(`/api/collections/${collId}`, { method: 'DELETE' });
+            window.location.href = '/collections';
+        }
+    }
+}
+</script>
+{% endblock %}

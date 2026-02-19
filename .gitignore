@@ -8,3 +8,6 @@ dist/
 .ruff_cache/
 data/
 *.gguf
+youtube_client_secret.json
+youtube_oauth_token.json
+._*

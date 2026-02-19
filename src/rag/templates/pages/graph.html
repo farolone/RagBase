@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Graph — Wissensdatenbank{% endblock %}
+{% block page_title %}Knowledge Graph{% endblock %}
+
+{% block head %}
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div x-data="graphApp()" x-init="load()">
+    <!-- Controls -->
+    <div class="flex items-center gap-4 mb-4">
+        <input type="text" x-model="searchQuery" @keydown.enter="searchEntity()"
+               placeholder="Entity suchen..."
+               class="flex-1 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm">
+        <select x-model="filterType" @change="load()" class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm">
+            <option value="">Alle Typen</option>
+            <template x-for="t in entityTypes" :key="t">
+                <option :value="t" x-text="t"></option>
+            </template>
+        </select>
+        <button @click="searchEntity()" class="px-4 py-2 bg-primary-600 text-white rounded-lg text-sm hover:bg-primary-700">Suchen</button>
+    </div>
+
+    <div class="flex gap-4" style="height: calc(100vh - 14rem)">
+        <!-- Entity list -->
+        <div class="w-72 flex-shrink-0 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col">
+            <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                <h3 class="font-semibold text-sm">Entities (<span x-text="entities.length"></span>)</h3>
+            </div>
+            <div class="flex-1 overflow-y-auto divide-y divide-gray-200 dark:divide-gray-700">
+                <template x-for="e in entities" :key="e.name">
+                    <div @click="selectEntity(e.name)" class="px-4 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/30"
+                         :class="selectedEntity === e.name ? 'bg-primary-50 dark:bg-primary-900/20' : ''">
+                        <div class="flex items-center justify-between">
+                            <span class="font-medium text-sm truncate" x-text="e.name"></span>
+                            <span class="text-xs text-gray-400" x-text="e.doc_count || ''"></span>
+                        </div>
+                        <span class="text-xs" :class="entityTypeBadge(e.entity_type)" x-text="e.entity_type"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Graph canvas -->
+        <div class="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 relative">
+            <div id="graph-canvas" class="w-full h-full"></div>
+            <div x-show="!graphLoaded" class="absolute inset-0 flex items-center justify-center text-gray-400">
+                <p>Klicke auf eine Entity um den Graph zu laden</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/graph.js"></script>
+<script>
+function graphApp() {
+    return {
+        entities: [],
+        entityTypes: [],
+        searchQuery: '',
+        filterType: '',
+        selectedEntity: null,
+        graphLoaded: false,
+        network: null,
+        async load() {
+            const params = new URLSearchParams();
+            if (this.filterType) params.set('entity_type', this.filterType);
+            if (this.searchQuery) params.set('name', this.searchQuery);
+            params.set('limit', '200');
+            const resp = await fetch('/api/graph/entities?' + params);
+            const data = await resp.json();
+            this.entities = data.entities;
+            this.entityTypes = data.entity_types;
+        },
+        async searchEntity() {
+            await this.load();
+            if (this.entities.length > 0) {
+                this.selectEntity(this.entities[0].name);
+            }
+        },
+        async selectEntity(name) {
+            this.selectedEntity = name;
+            const resp = await fetch(`/api/graph/neighborhood/${encodeURIComponent(name)}`);
+            const data = await resp.json();
+            this.graphLoaded = true;
+            this.$nextTick(() => {
+                renderGraph('graph-canvas', data, (nodeName) => this.selectEntity(nodeName));
+            });
+        },
+        entityTypeBadge(t) {
+            const map = {
+                PERSON: 'text-blue-600 dark:text-blue-400',
+                ORGANIZATION: 'text-green-600 dark:text-green-400',
+                LOCATION: 'text-yellow-600 dark:text-yellow-400',
+                TOPIC: 'text-purple-600 dark:text-purple-400',
+                EVENT: 'text-red-600 dark:text-red-400',
+            };
+            return map[t] || 'text-gray-500';
+        }
+    }
+}
+</script>
+{% endblock %}

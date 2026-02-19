@@ -147,3 +147,50 @@ class QdrantStore:
             )
             for hit in results.points
         ]
+
+    def delete_by_document_id(self, document_id: str) -> int:
+        """Delete all vectors belonging to a document. Returns count of deleted points."""
+        doc_filter = Filter(
+            must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+        )
+        # Count first
+        count_result = self.client.count(
+            collection_name=self.collection_name,
+            count_filter=doc_filter,
+            exact=True,
+        )
+        count = count_result.count
+
+        if count > 0:
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=doc_filter,
+            )
+        return count
+
+    def get_chunks_for_document(self, document_id: str, limit: int = 1000) -> list[dict]:
+        """Get all chunks for a document, ordered by chunk_index."""
+        doc_filter = Filter(
+            must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+        )
+        results = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=doc_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        points = results[0]
+        chunks = []
+        for point in points:
+            chunks.append({
+                "chunk_id": point.payload.get("chunk_id", ""),
+                "content": point.payload.get("content", ""),
+                "chunk_index": point.payload.get("chunk_index", 0),
+                "metadata": {
+                    k: v for k, v in point.payload.items()
+                    if k not in ("chunk_id", "document_id", "content", "chunk_index")
+                },
+            })
+        chunks.sort(key=lambda c: c["chunk_index"])
+        return chunks

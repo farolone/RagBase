@@ -1,0 +1,42 @@
+# RAG Ingestion Sources
+# Quellen die täglich um 06:00 abgefragt werden.
+
+schedule:
+  cron: "0 6 * * *"
+
+# Feste Web-URLs
+web:
+  - url: https://de.wikipedia.org/wiki/Retrieval_Augmented_Generation
+    enabled: true
+
+# YouTube
+youtube:
+  watch_later: true
+  playlists:
+    - PLU1o0Hb7N8SZkFuIXTbUkeeYtSd4Wuga4  # Claude
+    - PLU1o0Hb7N8SbLng1qvAJ0TKiGVbZL88_Z  # AI
+  channels: []
+    # Channel-IDs hier eintragen, z.B.:
+    # - UCYO_jab_esuFRV4b17AJtAw  # 3Blue1Brown
+  channel_max_videos: 5  # Letzte N Videos pro Kanal
+
+# Reddit
+reddit:
+  saved_posts: true
+  limit: 50
+
+# Twitter/X
+twitter:
+  bookmarks: true
+  limit: 50
+
+# Lokale Ordner
+folders:
+  enabled: true
+  sources:
+    - path: /root/documents
+      extensions: [".pdf", ".docx", ".epub", ".txt", ".md"]
+      max_file_size_mb: 50
+    - path: /root/ebooks
+      extensions: [".epub", ".pdf"]
+      max_file_size_mb: 200
