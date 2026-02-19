@@ -1,23 +1,27 @@
 import asyncio
 import re
+from datetime import datetime, timezone
 
 from rag.ingestion.base import BaseIngestor
 from rag.models import Chunk, Document, Platform
 from rag.processing.chunking import MediaChunker
+
+# Default cookies path on LXC
+_DEFAULT_COOKIES_PATH = "/root/rag/twitter_cookies.json"
 
 
 class TwitterIngestor(BaseIngestor):
     """Twitter/X ingestor using Twikit. Requires authenticated session."""
 
     def __init__(self, cookies_path: str | None = None):
-        self._cookies_path = cookies_path
+        self._cookies_path = cookies_path or _DEFAULT_COOKIES_PATH
         self._client = None
         self.media_chunker = MediaChunker()
 
     async def _get_client(self):
         if self._client is None:
             from twikit import Client
-            self._client = Client("en-US")
+            self._client = Client("de-DE")
             if self._cookies_path:
                 self._client.load_cookies(self._cookies_path)
         return self._client
@@ -31,19 +35,50 @@ class TwitterIngestor(BaseIngestor):
 
         tweet = await client.get_tweet_by_id(tweet_id)
 
-        # Collect thread if this is part of one
-        tweets_data = []
-        tweets_data.append({
-            "text": tweet.text,
-            "id": tweet.id,
-            "author": tweet.user.name if tweet.user else None,
-        })
+        # Collect thread tweets
+        tweets_data = [
+            {
+                "text": tweet.text,
+                "id": tweet.id,
+                "author": tweet.user.name if tweet.user else None,
+            }
+        ]
+
+        # Walk thread: collect replies from same author (thread = self-replies)
+        try:
+            current = tweet
+            while current.in_reply_to_tweet_id:
+                parent = await client.get_tweet_by_id(current.in_reply_to_tweet_id)
+                if parent.user and tweet.user and parent.user.id == tweet.user.id:
+                    tweets_data.insert(0, {
+                        "text": parent.text,
+                        "id": parent.id,
+                        "author": parent.user.name,
+                    })
+                    current = parent
+                else:
+                    break
+        except Exception:
+            pass  # Thread walking is best-effort
+
+        # Parse created_at
+        created_at = None
+        if hasattr(tweet, "created_at") and tweet.created_at:
+            try:
+                created_at = datetime.strptime(
+                    tweet.created_at, "%a %b %d %H:%M:%S %z %Y"
+                )
+            except (ValueError, TypeError):
+                pass
+        if created_at is None and hasattr(tweet, "created_at_datetime"):
+            created_at = tweet.created_at_datetime
 
         doc = Document(
             title=f"Tweet by {tweet.user.name if tweet.user else 'unknown'}",
             source_url=source,
             platform=Platform.TWITTER,
             author=tweet.user.name if tweet.user else None,
+            created_at=created_at,
             metadata={
                 "tweet_id": tweet_id,
                 "likes": tweet.favorite_count,

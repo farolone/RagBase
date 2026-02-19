@@ -1,8 +1,13 @@
 import json
+import os
+import shutil
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+DOCUMENTS_BASE = Path("/root/documents")
 
 
 class QualityUpdate(BaseModel):
@@ -67,26 +72,6 @@ def get_document(doc_id: str):
     return result
 
 
-@router.get("/{doc_id}/transcript")
-def get_document_transcript(doc_id: str):
-    from rag.storage.postgres import PostgresStore
-    pg = PostgresStore()
-    doc = pg.get_document(doc_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    transcript = pg.get_transcript(doc_id)
-    if not transcript:
-        return {"available": False, "segments": [], "source": None, "segment_count": 0}
-
-    return {
-        "available": True,
-        "segments": transcript["segments"],
-        "source": transcript["source"],
-        "segment_count": len(transcript["segments"]),
-    }
-
-
 @router.delete("/{doc_id}")
 def delete_document(doc_id: str):
     """Cascade delete: removes from Qdrant, Neo4j, and PostgreSQL."""
@@ -141,7 +126,7 @@ def re_ingest_document(doc_id: str):
     # Re-ingest
     from rag.ingestion.web import WebIngestor
     from rag.ingestion.youtube import YouTubeIngestor
-    from rag.ingestion.document import DocumentIngestor, SUPPORTED_EXTENSIONS
+    from rag.ingestion.pdf import PDFIngestor
     from rag.processing.embedding import Embedder
     from rag.processing.ner import EntityExtractor
     from rag.processing.graph_builder import GraphBuilder
@@ -149,8 +134,8 @@ def re_ingest_document(doc_id: str):
     source = doc.source_url
     if "youtube.com" in source or "youtu.be" in source:
         ingestor = YouTubeIngestor()
-    elif any(source.endswith(ext) for ext in SUPPORTED_EXTENSIONS):
-        ingestor = DocumentIngestor()
+    elif source.endswith(".pdf"):
+        ingestor = PDFIngestor()
     else:
         ingestor = WebIngestor()
 
@@ -163,14 +148,6 @@ def re_ingest_document(doc_id: str):
 
     pg.save_document(new_doc)
     pg.update_document_counts(new_doc.id, len(chunks), 0)
-
-    # Save transcript if available (YouTube)
-    if hasattr(ingestor, '_last_segments') and ingestor._last_segments:
-        pg.save_transcript(new_doc.id, ingestor._last_segments, ingestor._last_transcript_source)
-
-    # Save published_at if available
-    if new_doc.created_at:
-        pg.update_published_at(new_doc.id, new_doc.created_at)
 
     ner = EntityExtractor()
     graph = GraphBuilder()
@@ -226,6 +203,64 @@ def update_document_tags(doc_id: str, tag_ids: list[str]):
     pg = PostgresStore()
     pg.set_document_tags(doc_id, tag_ids)
     return {"ok": True}
+
+
+@router.post("/upload")
+def upload_document(
+    file: UploadFile = File(...),
+    collection_id: str | None = Form(None),
+):
+    """Upload a file, save to collection folder, ingest, and assign to collection."""
+    from rag.storage.postgres import PostgresStore
+
+    pg = PostgresStore()
+
+    # Determine target folder
+    folder_name = "Unsorted"
+    if collection_id:
+        coll = pg.get_collection(collection_id)
+        if coll:
+            folder_name = coll["name"]
+
+    target_dir = DOCUMENTS_BASE / folder_name
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save file
+    target_path = target_dir / file.filename
+    with open(target_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Ingest
+    try:
+        from rag.pipeline.tasks import _run_full_ingest
+
+        ext = Path(file.filename).suffix.lower()
+        if ext in (".pdf",):
+            source_type = "pdf"
+        else:
+            source_type = "web"  # fallback for txt/md/etc
+
+        result = _run_full_ingest(str(target_path), source_type)
+
+        # Assign to collection
+        if collection_id and result:
+            pg.add_document_to_collection(result["doc_id"], collection_id)
+
+        return {
+            "uploaded": True,
+            "filename": file.filename,
+            "path": str(target_path),
+            "document_id": result["doc_id"] if result else None,
+            "chunks": result["chunks"] if result else 0,
+            "entities": result["entities"] if result else 0,
+        }
+    except Exception as e:
+        return {
+            "uploaded": True,
+            "filename": file.filename,
+            "path": str(target_path),
+            "error": str(e),
+        }
 
 
 def _serialize_row(row):

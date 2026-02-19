@@ -1,0 +1,486 @@
+{% extends "base.html" %}
+{% block title %}Quellen — Wissensdatenbank{% endblock %}
+{% block page_title %}Quellen{% endblock %}
+
+{% block header_actions %}
+<button @click="showImportModal = true" class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">
+    YAML Import
+</button>
+<button @click="openCreateModal()" class="px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">
+    + Neue Quelle
+</button>
+{% endblock %}
+
+{% block content %}
+<div x-data="sourcesApp()" x-init="load()">
+
+    <!-- File Upload Drop Zone -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 p-6 mb-6 text-center transition-colors"
+         :class="dragOver ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20' : ''"
+         @dragover.prevent="dragOver = true"
+         @dragleave.prevent="dragOver = false"
+         @drop.prevent="handleDrop($event)">
+        <svg class="w-10 h-10 mx-auto text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">Dateien hierher ziehen oder <label class="text-primary-600 cursor-pointer hover:underline"><input type="file" multiple class="hidden" @change="handleFileSelect($event)">klicken</label></p>
+        <p class="text-xs text-gray-400">PDF, DOCX, EPUB, TXT, MD</p>
+        <div class="mt-3 flex items-center justify-center gap-2">
+            <label class="text-xs text-gray-500">Collection:</label>
+            <select x-model="uploadCollectionId" class="text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded px-2 py-1">
+                <option value="">Keine</option>
+                <template x-for="c in collections" :key="c.id">
+                    <option :value="c.id" x-text="c.name"></option>
+                </template>
+            </select>
+        </div>
+        <!-- Upload progress -->
+        <template x-for="u in uploads" :key="u.name">
+            <div class="mt-2 text-left max-w-md mx-auto">
+                <div class="flex items-center justify-between text-xs mb-1">
+                    <span x-text="u.name" class="truncate"></span>
+                    <span x-text="u.status" :class="u.status === 'done' ? 'text-green-600' : u.status === 'error' ? 'text-red-600' : 'text-blue-600'"></span>
+                </div>
+                <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                    <div class="bg-primary-600 h-1.5 rounded-full transition-all" :style="'width:' + u.progress + '%'"></div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Filters -->
+    <div class="flex gap-3 mb-4">
+        <select x-model="filterType" @change="load()" class="text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-800 rounded-lg px-3 py-2">
+            <option value="">Alle Typen</option>
+            <option value="web_url">Web-URLs</option>
+            <option value="youtube_channel">YouTube-Kanäle</option>
+            <option value="youtube_playlist">YouTube-Playlists</option>
+            <option value="youtube_watch_later">YouTube Watch Later</option>
+            <option value="reddit_saved">Reddit Saved</option>
+            <option value="twitter_bookmarks">Twitter Bookmarks</option>
+            <option value="folder">Ordner</option>
+        </select>
+        <select x-model="filterCollection" @change="applyFilter()" class="text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-800 rounded-lg px-3 py-2">
+            <option value="">Alle Collections</option>
+            <template x-for="c in collections" :key="c.id">
+                <option :value="c.id" x-text="c.name"></option>
+            </template>
+        </select>
+    </div>
+
+    <!-- Sources grouped by type -->
+    <div class="space-y-4">
+        <template x-for="group in filteredGroups" :key="group.type">
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div class="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
+                    <span class="text-lg" x-text="typeIcon(group.type)"></span>
+                    <h3 class="font-semibold text-sm" x-text="typeLabel(group.type)"></h3>
+                    <span class="text-xs text-gray-400 ml-auto" x-text="group.items.length + ' Quellen'"></span>
+                </div>
+                <div class="divide-y divide-gray-100 dark:divide-gray-700">
+                    <template x-for="src in group.items" :key="src.id">
+                        <div class="px-5 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <p class="font-medium text-sm truncate" x-text="src.name"></p>
+                                    <span x-show="src.collection_name" class="text-xs px-2 py-0.5 rounded-full"
+                                          :style="'background:' + (src.collection_color || '#3B82F6') + '22; color:' + (src.collection_color || '#3B82F6')"
+                                          x-text="src.collection_name"></span>
+                                </div>
+                                <p class="text-xs text-gray-400 mt-0.5 truncate" x-text="sourceDetail(src)"></p>
+                            </div>
+                            <div class="flex items-center gap-2 ml-4">
+                                <span x-show="src.last_run_at" class="text-xs text-gray-400" x-text="src.last_run_at ? timeAgo(src.last_run_at) : ''"></span>
+                                <button @click="toggleSource(src)" class="w-11 h-6 rounded-full relative transition-colors flex-shrink-0"
+                                        :class="src.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'"
+                                        style="padding: 2px;">
+                                    <span class="block w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200"
+                                          :class="src.enabled ? 'translate-x-5' : 'translate-x-0'"
+                                          style="box-shadow: 0 1px 3px rgba(0,0,0,0.3)"></span>
+                                </button>
+                                <button @click="openEditModal(src)" class="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                </button>
+                                <button @click="deleteSource(src)" class="p-1.5 text-gray-400 hover:text-red-600 rounded">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+        <div x-show="filteredGroups.length === 0" class="text-center py-12 text-gray-500">
+            <p>Keine Quellen konfiguriert</p>
+            <p class="text-sm mt-1">Erstelle eine neue Quelle oder importiere aus der YAML-Datei</p>
+        </div>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div x-show="showModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="showModal = false">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                <h3 class="font-semibold" x-text="editingId ? 'Quelle bearbeiten' : 'Neue Quelle'"></h3>
+                <button @click="showModal = false" class="text-gray-400 hover:text-gray-600">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+                <!-- Source Type -->
+                <div>
+                    <label class="block text-sm font-medium mb-1">Typ</label>
+                    <select x-model="form.source_type" :disabled="!!editingId" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm disabled:opacity-50">
+                        <option value="web_url">Web-URL</option>
+                        <option value="youtube_channel">YouTube-Kanal</option>
+                        <option value="youtube_playlist">YouTube-Playlist</option>
+                        <option value="youtube_watch_later">YouTube Watch Later</option>
+                        <option value="reddit_saved">Reddit Saved Posts</option>
+                        <option value="twitter_bookmarks">Twitter Bookmarks</option>
+                        <option value="folder">Ordner</option>
+                    </select>
+                </div>
+
+                <!-- Name -->
+                <div>
+                    <label class="block text-sm font-medium mb-1">Name</label>
+                    <input x-model="form.name" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="Anzeigename">
+                </div>
+
+                <!-- Type-specific fields -->
+                <template x-if="form.source_type === 'web_url'">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">URL</label>
+                        <input x-model="form.config.url" type="url" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="https://...">
+                    </div>
+                </template>
+
+                <template x-if="form.source_type === 'youtube_channel'">
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Channel-ID</label>
+                            <input x-model="form.config.channel_id" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="UC... oder @handle">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Max. Videos</label>
+                            <input x-model.number="form.config.max_videos" type="number" min="1" max="50" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" value="5">
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="form.source_type === 'youtube_playlist'">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">Playlist-ID</label>
+                        <input x-model="form.config.playlist_id" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="PL...">
+                    </div>
+                </template>
+
+                <template x-if="form.source_type === 'reddit_saved'">
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Subreddit-Filter</label>
+                            <input x-model="form.config.subreddit_filter" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="z.B. RAG (leer = alle)">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Limit</label>
+                            <input x-model.number="form.config.limit" type="number" min="1" max="500" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" value="50">
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="form.source_type === 'twitter_bookmarks'">
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Ordner</label>
+                            <input x-model="form.config.folder" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="z.B. Bitcoin">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Keywords (kommagetrennt)</label>
+                            <input x-model="form.config.keywords_str" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="btc, bitcoin, sats">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Limit</label>
+                            <input x-model.number="form.config.limit" type="number" min="1" max="500" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" value="50">
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="form.source_type === 'folder'">
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Pfad</label>
+                            <input x-model="form.config.path" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder="/root/documents/Bitcoin">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Dateiendungen (kommagetrennt)</label>
+                            <input x-model="form.config.extensions_str" type="text" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" placeholder=".pdf, .docx, .epub" value=".pdf">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Max. Dateigröße (MB)</label>
+                            <input x-model.number="form.config.max_file_size_mb" type="number" min="1" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm" value="50">
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Collection -->
+                <div>
+                    <label class="block text-sm font-medium mb-1">Collection</label>
+                    <select x-model="form.collection_id" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm">
+                        <option value="">Keine</option>
+                        <template x-for="c in collections" :key="c.id">
+                            <option :value="c.id" x-text="c.name"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Enabled -->
+                <div class="flex items-center gap-2">
+                    <input x-model="form.enabled" type="checkbox" class="rounded border-gray-300">
+                    <label class="text-sm">Aktiv</label>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+                <button @click="showModal = false" class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">Abbrechen</button>
+                <button @click="saveSource()" class="px-4 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- YAML Import Modal -->
+    <div x-show="showImportModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="showImportModal = false">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+            <h3 class="font-semibold mb-3">YAML Import</h3>
+            <p class="text-sm text-gray-500 mb-4">Importiert Quellen aus <code>/root/rag/sources.yaml</code> in die Datenbank.</p>
+            <div class="flex justify-end gap-3">
+                <button @click="showImportModal = false" class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">Abbrechen</button>
+                <button @click="importYaml()" class="px-4 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">Importieren</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function sourcesApp() {
+    return {
+        sources: [],
+        collections: [],
+        filterType: '',
+        filterCollection: '',
+        showModal: false,
+        showImportModal: false,
+        editingId: null,
+        dragOver: false,
+        uploadCollectionId: '',
+        uploads: [],
+        form: {
+            source_type: 'web_url',
+            name: '',
+            config: {},
+            collection_id: '',
+            enabled: true,
+        },
+
+        async load() {
+            const [srcResp, colResp] = await Promise.all([
+                fetch('/api/sources' + (this.filterType ? '?source_type=' + this.filterType : '')),
+                fetch('/api/collections'),
+            ]);
+            const srcData = await srcResp.json();
+            const colData = await colResp.json();
+            this.sources = srcData.sources || [];
+            this.collections = colData.collections || [];
+        },
+
+        get filteredGroups() {
+            let filtered = this.sources;
+            if (this.filterCollection) {
+                filtered = filtered.filter(s => s.collection_id === this.filterCollection);
+            }
+            const groups = {};
+            for (const src of filtered) {
+                if (!groups[src.source_type]) {
+                    groups[src.source_type] = { type: src.source_type, items: [] };
+                }
+                groups[src.source_type].items.push(src);
+            }
+            const order = ['web_url', 'youtube_channel', 'youtube_playlist', 'youtube_watch_later', 'reddit_saved', 'twitter_bookmarks', 'folder'];
+            return order.filter(t => groups[t]).map(t => groups[t]);
+        },
+
+        typeLabel(t) {
+            const labels = {
+                web_url: 'Web-URLs', youtube_channel: 'YouTube-Kanäle', youtube_playlist: 'YouTube-Playlists',
+                youtube_watch_later: 'YouTube Watch Later', reddit_saved: 'Reddit (Saved Posts)',
+                twitter_bookmarks: 'Twitter Bookmarks', folder: 'Ordner',
+            };
+            return labels[t] || t;
+        },
+
+        typeIcon(t) {
+            const icons = {
+                web_url: '\uD83C\uDF10', youtube_channel: '\uD83C\uDFAC', youtube_playlist: '\uD83C\uDFB5',
+                youtube_watch_later: '\u23F0', reddit_saved: '\uD83E\uDD16',
+                twitter_bookmarks: '\uD83D\uDC26', folder: '\uD83D\uDCC1',
+            };
+            return icons[t] || '\uD83D\uDCC4';
+        },
+
+        sourceDetail(src) {
+            const c = src.config || {};
+            switch (src.source_type) {
+                case 'web_url': return c.url || '';
+                case 'youtube_channel': return c.channel_id || '';
+                case 'youtube_playlist': return c.playlist_id || '';
+                case 'reddit_saved': return c.subreddit_filter ? 'r/' + c.subreddit_filter : 'Alle Subreddits';
+                case 'twitter_bookmarks': return c.folder ? 'Ordner: ' + c.folder : (c.keywords || []).join(', ');
+                case 'folder': return c.path || '';
+                default: return '';
+            }
+        },
+
+        timeAgo(dateStr) {
+            const d = new Date(dateStr);
+            const diff = (Date.now() - d.getTime()) / 1000;
+            if (diff < 60) return 'gerade eben';
+            if (diff < 3600) return Math.floor(diff/60) + ' Min.';
+            if (diff < 86400) return Math.floor(diff/3600) + ' Std.';
+            return Math.floor(diff/86400) + ' Tage';
+        },
+
+        openCreateModal() {
+            this.editingId = null;
+            this.form = { source_type: 'web_url', name: '', config: {}, collection_id: '', enabled: true };
+            this.showModal = true;
+        },
+
+        openEditModal(src) {
+            this.editingId = src.id;
+            const config = { ...(src.config || {}) };
+            // Convert arrays to comma strings for editing
+            if (config.keywords) config.keywords_str = config.keywords.join(', ');
+            if (config.extensions) config.extensions_str = config.extensions.join(', ');
+            this.form = {
+                source_type: src.source_type,
+                name: src.name,
+                config: config,
+                collection_id: src.collection_id || '',
+                enabled: src.enabled,
+            };
+            this.showModal = true;
+        },
+
+        buildConfig() {
+            const c = { ...this.form.config };
+            // Convert comma strings back to arrays
+            if (c.keywords_str !== undefined) {
+                c.keywords = c.keywords_str.split(',').map(s => s.trim()).filter(Boolean);
+                delete c.keywords_str;
+            }
+            if (c.extensions_str !== undefined) {
+                c.extensions = c.extensions_str.split(',').map(s => s.trim()).filter(Boolean);
+                delete c.extensions_str;
+            }
+            return c;
+        },
+
+        async saveSource() {
+            const payload = {
+                source_type: this.form.source_type,
+                name: this.form.name,
+                config: this.buildConfig(),
+                collection_id: this.form.collection_id || null,
+                enabled: this.form.enabled,
+            };
+
+            let resp;
+            if (this.editingId) {
+                resp = await fetch('/api/sources/' + this.editingId, {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+                });
+            } else {
+                resp = await fetch('/api/sources', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+                });
+            }
+
+            if (resp.ok) {
+                showToast(this.editingId ? 'Quelle aktualisiert' : 'Quelle erstellt');
+                this.showModal = false;
+                this.load();
+            } else {
+                showToast('Fehler beim Speichern', 'error');
+            }
+        },
+
+        async toggleSource(src) {
+            const resp = await fetch('/api/sources/' + src.id + '/toggle', { method: 'POST' });
+            if (resp.ok) {
+                src.enabled = !src.enabled;
+            }
+        },
+
+        async deleteSource(src) {
+            if (!confirm('Quelle "' + src.name + '" wirklich löschen?')) return;
+            const resp = await fetch('/api/sources/' + src.id, { method: 'DELETE' });
+            if (resp.ok) {
+                showToast('Quelle gelöscht');
+                this.load();
+            } else {
+                showToast('Fehler beim Löschen', 'error');
+            }
+        },
+
+        async importYaml() {
+            const resp = await fetch('/api/sources/import-yaml', { method: 'POST' });
+            const data = await resp.json();
+            showToast(data.imported + ' Quellen importiert');
+            this.showImportModal = false;
+            this.load();
+        },
+
+        applyFilter() {
+            // Client-side filter, no reload needed
+        },
+
+        handleDrop(e) {
+            this.dragOver = false;
+            const files = e.dataTransfer.files;
+            this.uploadFiles(files);
+        },
+
+        handleFileSelect(e) {
+            this.uploadFiles(e.target.files);
+        },
+
+        async uploadFiles(files) {
+            for (const file of files) {
+                const u = { name: file.name, progress: 0, status: 'uploading' };
+                this.uploads.push(u);
+
+                const formData = new FormData();
+                formData.append('file', file);
+                if (this.uploadCollectionId) {
+                    formData.append('collection_id', this.uploadCollectionId);
+                }
+
+                try {
+                    const resp = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+                    u.progress = 100;
+                    const data = await resp.json();
+                    if (data.error) {
+                        u.status = 'error';
+                        showToast('Fehler: ' + data.error, 'error');
+                    } else {
+                        u.status = 'done';
+                        showToast(file.name + ' hochgeladen (' + (data.chunks || 0) + ' Chunks)');
+                    }
+                } catch (e) {
+                    u.progress = 100;
+                    u.status = 'error';
+                    showToast('Upload fehlgeschlagen: ' + file.name, 'error');
+                }
+            }
+            // Clear uploads after 5 seconds
+            setTimeout(() => { this.uploads = []; }, 5000);
+        },
+    }
+}
+</script>
+{% endblock %}

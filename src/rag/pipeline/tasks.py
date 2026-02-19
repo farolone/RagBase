@@ -38,21 +38,16 @@ def _run_full_ingest(source: str, source_type: str) -> dict:
     from rag.ingestion.pdf import PDFIngestor
     from rag.ingestion.youtube import YouTubeIngestor
     from rag.ingestion.web import WebIngestor
-    from rag.ingestion.document import DocumentIngestor
     from rag.processing.embedding import Embedder
     from rag.processing.ner import EntityExtractor
     from rag.processing.graph_builder import GraphBuilder
     from rag.storage.qdrant import QdrantStore
     from rag.storage.postgres import PostgresStore
 
-    from rag.ingestion.reddit import RedditIngestor
-
     ingestors = {
         "pdf": PDFIngestor,
         "youtube": YouTubeIngestor,
         "web": WebIngestor,
-        "document": DocumentIngestor,
-        "reddit": RedditIngestor,
     }
 
     if source_type not in ingestors:
@@ -78,14 +73,6 @@ def _run_full_ingest(source: str, source_type: str) -> dict:
     postgres.save_document(doc)
     postgres.update_document_counts(doc.id, len(chunks), 0)
 
-    # Save transcript if available (YouTube)
-    if hasattr(ingestor, '_last_segments') and ingestor._last_segments:
-        postgres.save_transcript(doc.id, ingestor._last_segments, ingestor._last_transcript_source)
-
-    # Save published_at if available
-    if doc.created_at:
-        postgres.update_published_at(doc.id, doc.created_at)
-
     ner = EntityExtractor()
     graph = GraphBuilder()
     all_entities = []
@@ -104,6 +91,42 @@ def _run_full_ingest(source: str, source_type: str) -> dict:
         "chunks": len(chunks),
         "entities": len(all_entities),
     }
+
+
+def _run_full_ingest_to_collection(source: str, source_type: str, collection_id: str | None) -> dict | None:
+    """Ingest and optionally assign the resulting document to a collection."""
+    result = _run_full_ingest(source, source_type)
+    if result and collection_id:
+        from rag.storage.postgres import PostgresStore
+        pg = PostgresStore()
+        pg.add_document_to_collection(result["doc_id"], collection_id)
+    return result
+
+
+@task(retries=2, retry_delay_seconds=30, log_prints=True)
+def ingest_web_url_to_collection(url: str, collection_id: str | None = None) -> dict | None:
+    """Ingest a web URL with dedup check and collection assignment."""
+    if is_already_ingested(url):
+        print(f"SKIP (already ingested): {url}")
+        return None
+    print(f"Ingesting web: {url}")
+    result = _run_full_ingest_to_collection(url, "web", collection_id)
+    if result:
+        print(f"Done: {result['title']} ({result['chunks']} chunks, {result['entities']} entities)")
+    return result
+
+
+@task(retries=2, retry_delay_seconds=30, log_prints=True)
+def ingest_youtube_video_to_collection(url: str, collection_id: str | None = None) -> dict | None:
+    """Ingest a YouTube video with dedup check and collection assignment."""
+    if is_already_ingested(url):
+        print(f"SKIP (already ingested): {url}")
+        return None
+    print(f"Ingesting YouTube: {url}")
+    result = _run_full_ingest_to_collection(url, "youtube", collection_id)
+    if result:
+        print(f"Done: {result['title']} ({result['chunks']} chunks, {result['entities']} entities)")
+    return result
 
 
 @task(retries=2, retry_delay_seconds=30, log_prints=True)
@@ -130,58 +153,6 @@ def ingest_youtube_video(url: str) -> dict | None:
     result = _run_full_ingest(url, "youtube")
     print(f"Done: {result['title']} ({result['chunks']} chunks, {result['entities']} entities)")
     return result
-
-
-@task(retries=1, retry_delay_seconds=30, log_prints=True)
-def ingest_file(file_path: str) -> dict | None:
-    """Ingest a single local file with dedup check."""
-    from pathlib import Path
-    resolved = str(Path(file_path).resolve())
-
-    if is_already_ingested(resolved):
-        print(f"SKIP (already ingested): {resolved}")
-        return None
-
-    print(f"Ingesting file: {resolved}")
-    result = _run_full_ingest(resolved, "document")
-    print(f"Done: {result['title']} ({result['chunks']} chunks, {result['entities']} entities)")
-    return result
-
-
-@task(retries=1, retry_delay_seconds=30, log_prints=True)
-def scan_and_ingest_folder(folder_config: dict) -> dict:
-    """Scan a folder and ingest all new files."""
-    from rag.ingestion.folder_scanner import FolderScanner
-
-    scanner = FolderScanner(
-        extensions=folder_config.get("extensions"),
-        exclude_patterns=folder_config.get("exclude_patterns"),
-        max_file_size_mb=folder_config.get("max_file_size_mb", 100),
-    )
-    scan_result = scanner.scan(folder_config["path"])
-    print(f"Scanned {folder_config['path']}: {len(scan_result.files)} files, {scan_result.skipped_count} skipped")
-
-    ingested = 0
-    skipped = 0
-    errors = 0
-
-    for f in scan_result.files:
-        resolved = str(f.path.resolve())
-        if is_already_ingested(resolved):
-            skipped += 1
-            continue
-        try:
-            result = ingest_file(resolved)
-            if result:
-                ingested += 1
-            else:
-                skipped += 1
-        except Exception as e:
-            print(f"ERROR ingesting {f.relative_path}: {e}")
-            errors += 1
-
-    print(f"Folder done: {ingested} ingested, {skipped} skipped, {errors} errors")
-    return {"ingested": ingested, "skipped": skipped, "errors": errors}
 
 
 @task(retries=1, retry_delay_seconds=60, log_prints=True)

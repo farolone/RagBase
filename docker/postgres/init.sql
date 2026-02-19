@@ -107,3 +107,18 @@ CREATE INDEX IF NOT EXISTS idx_document_tags_doc ON document_tags(document_id);
 CREATE INDEX IF NOT EXISTS idx_document_tags_tag ON document_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_source_ratings_doc ON source_ratings(document_id);
 CREATE INDEX IF NOT EXISTS idx_answer_feedback_session ON answer_feedback(session_id);
+
+-- Source Configs (for web UI source management)
+CREATE TABLE IF NOT EXISTS source_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    collection_id UUID REFERENCES collections(id) ON DELETE SET NULL,
+    enabled BOOLEAN DEFAULT TRUE,
+    last_run_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_source_configs_type ON source_configs(source_type);
+CREATE INDEX IF NOT EXISTS idx_source_configs_collection ON source_configs(collection_id);

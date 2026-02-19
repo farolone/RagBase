@@ -85,7 +85,7 @@ class PostgresStore:
                 )
                 return [self._row_to_document(row) for row in cur.fetchall()]
 
-    # --- Document listing ---
+    # --- New methods for frontend ---
 
     def list_documents(
         self,
@@ -97,6 +97,7 @@ class PostgresStore:
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[dict], int]:
+        """List documents with pagination, filters, and total count."""
         conditions = []
         params: list = []
 
@@ -136,6 +137,7 @@ class PostgresStore:
                 return rows, total
 
     def get_document_detail(self, doc_id: str) -> dict | None:
+        """Get document with tags, collections, and ratings."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM documents WHERE id = %s", (doc_id,))
@@ -164,6 +166,7 @@ class PostgresStore:
                 return doc
 
     def delete_document(self, doc_id: str) -> bool:
+        """Delete document from PostgreSQL (cascades to junction tables)."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
@@ -172,6 +175,7 @@ class PostgresStore:
             return deleted
 
     def update_document_counts(self, doc_id: str, chunk_count: int, entity_count: int):
+        """Update chunk and entity counts for a document."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -181,6 +185,7 @@ class PostgresStore:
             conn.commit()
 
     def update_document_quality(self, doc_id: str, quality_score: int):
+        """Set quality score (1-5) for a document."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -190,6 +195,7 @@ class PostgresStore:
             conn.commit()
 
     def flag_document(self, doc_id: str, flagged: bool, reason: str | None = None):
+        """Flag/unflag a document."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -203,69 +209,6 @@ class PostgresStore:
                         (doc_id, reason),
                     )
             conn.commit()
-
-    # --- Transcripts ---
-
-    def save_transcript(self, document_id: str, segments: list[dict], source: str = "api"):
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO document_transcripts (document_id, segments, source)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (document_id) DO UPDATE SET
-                        segments = EXCLUDED.segments,
-                        source = EXCLUDED.source""",
-                    (document_id, json.dumps(segments), source),
-                )
-            conn.commit()
-
-    def get_transcript(self, document_id: str) -> dict | None:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT segments, source FROM document_transcripts WHERE document_id = %s",
-                    (document_id,),
-                )
-                row = cur.fetchone()
-                if row is None:
-                    return None
-                return {"segments": row["segments"], "source": row["source"]}
-
-    def update_published_at(self, document_id: str, published_at: datetime):
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE documents SET published_at = %s WHERE id = %s",
-                    (published_at, document_id),
-                )
-            conn.commit()
-
-    def backfill_published_at(self) -> int:
-        """Backfill published_at from metadata.upload_date (YouTube) and metadata.date (Web)."""
-        count = 0
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                # YouTube: upload_date as YYYYMMDD
-                cur.execute(
-                    """UPDATE documents
-                    SET published_at = to_timestamp(metadata->>'upload_date', 'YYYYMMDD')
-                    WHERE published_at IS NULL
-                      AND metadata->>'upload_date' IS NOT NULL
-                      AND length(metadata->>'upload_date') = 8"""
-                )
-                count += cur.rowcount
-
-                # Web: date as YYYY-MM-DD
-                cur.execute(
-                    """UPDATE documents
-                    SET published_at = (metadata->>'date')::timestamptz
-                    WHERE published_at IS NULL
-                      AND metadata->>'date' IS NOT NULL
-                      AND metadata->>'date' ~ '^\d{4}-\d{2}-\d{2}'"""
-                )
-                count += cur.rowcount
-            conn.commit()
-        return count
 
     # --- Collections ---
 
@@ -303,17 +246,6 @@ class PostgresStore:
                 )
                 return cur.fetchone()
 
-    def update_collection(self, collection_id: str, name: str, description: str, color: str) -> bool:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE collections SET name = %s, description = %s, color = %s WHERE id = %s",
-                    (name, description, color, collection_id),
-                )
-                updated = cur.rowcount > 0
-            conn.commit()
-            return updated
-
     def delete_collection(self, collection_id: str) -> bool:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -340,26 +272,12 @@ class PostgresStore:
                 )
             conn.commit()
 
-    def get_collection_document_ids(self, collection_id: str) -> list[str]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT document_id FROM document_collections WHERE collection_id = %s",
-                    (collection_id,),
-                )
-                return [row["document_id"] for row in cur.fetchall()]
-
     # --- Tags ---
 
     def list_tags(self) -> list[dict]:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT t.*, COUNT(dt.document_id) as doc_count
-                    FROM tags t
-                    LEFT JOIN document_tags dt ON dt.tag_id = t.id
-                    GROUP BY t.id ORDER BY t.name"""
-                )
+                cur.execute("SELECT * FROM tags ORDER BY name")
                 return cur.fetchall()
 
     def create_tag(self, name: str, tag_type: str = "manual", color: str = "#6B7280") -> dict:
@@ -372,15 +290,6 @@ class PostgresStore:
                 row = cur.fetchone()
             conn.commit()
             return row
-
-    def delete_tag(self, tag_id: str) -> bool:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM document_tags WHERE tag_id = %s", (tag_id,))
-                cur.execute("DELETE FROM tags WHERE id = %s", (tag_id,))
-                deleted = cur.rowcount > 0
-            conn.commit()
-            return deleted
 
     def set_document_tags(self, document_id: str, tag_ids: list[str]):
         with self._connect() as conn:
@@ -456,27 +365,17 @@ class PostgresStore:
                 )
             conn.commit()
 
-    # --- Dedup ---
-
-    def document_exists_by_url(self, source_url: str) -> bool:
-        """Check if a document with this source_url already exists."""
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT 1 FROM documents WHERE source_url = %s LIMIT 1",
-                    (source_url,),
-                )
-                return cur.fetchone() is not None
-
     # --- Stats ---
 
     def get_platform_stats(self) -> dict:
+        """Get document counts per platform."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT platform, COUNT(*) as count FROM documents GROUP BY platform")
                 return {row["platform"]: row["count"] for row in cur.fetchall()}
 
     def get_ingestion_timeline(self) -> list[dict]:
+        """Get ingestion counts per day for the last 30 days."""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -486,6 +385,225 @@ class PostgresStore:
                     GROUP BY DATE(ingested_at) ORDER BY date"""
                 )
                 return [{"date": str(row["date"]), "count": row["count"]} for row in cur.fetchall()]
+
+    # --- Source Configs ---
+
+    def ensure_source_configs_table(self):
+        """Create source_configs table if it doesn't exist."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS source_configs (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        source_type TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        config JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        collection_id UUID REFERENCES collections(id) ON DELETE SET NULL,
+                        enabled BOOLEAN DEFAULT TRUE,
+                        last_run_at TIMESTAMPTZ,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_source_configs_type ON source_configs(source_type)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_source_configs_collection ON source_configs(collection_id)")
+            conn.commit()
+
+    def list_source_configs(self, source_type: str | None = None) -> list[dict]:
+        """List all source configs with optional type filter, joined with collection name."""
+        self.ensure_source_configs_table()
+        conditions = []
+        params: list = []
+        if source_type:
+            conditions.append("sc.source_type = %s")
+            params.append(source_type)
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT sc.*, c.name as collection_name, c.color as collection_color
+                    FROM source_configs sc
+                    LEFT JOIN collections c ON c.id = sc.collection_id
+                    {where}
+                    ORDER BY sc.source_type, sc.name""",
+                    params,
+                )
+                return cur.fetchall()
+
+    def create_source_config(
+        self, source_type: str, name: str, config: dict,
+        collection_id: str | None = None, enabled: bool = True,
+    ) -> dict:
+        self.ensure_source_configs_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO source_configs (source_type, name, config, collection_id, enabled)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING *""",
+                    (source_type, name, json.dumps(config), collection_id, enabled),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row
+
+    def get_source_config(self, config_id: str) -> dict | None:
+        self.ensure_source_configs_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT sc.*, c.name as collection_name, c.color as collection_color
+                    FROM source_configs sc
+                    LEFT JOIN collections c ON c.id = sc.collection_id
+                    WHERE sc.id = %s""",
+                    (config_id,),
+                )
+                return cur.fetchone()
+
+    def update_source_config(self, config_id: str, **fields) -> dict | None:
+        self.ensure_source_configs_table()
+        allowed = {"source_type", "name", "config", "collection_id", "enabled"}
+        updates = []
+        params: list = []
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            if key == "config":
+                value = json.dumps(value)
+            updates.append(f"{key} = %s")
+            params.append(value)
+        if not updates:
+            return self.get_source_config(config_id)
+        updates.append("updated_at = NOW()")
+        params.append(config_id)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE source_configs SET {', '.join(updates)} WHERE id = %s RETURNING *",
+                    params,
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row
+
+    def delete_source_config(self, config_id: str) -> bool:
+        self.ensure_source_configs_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM source_configs WHERE id = %s", (config_id,))
+                deleted = cur.rowcount > 0
+            conn.commit()
+            return deleted
+
+    def get_source_configs_by_type(self, source_type: str) -> list[dict]:
+        """Get enabled source configs for a specific type (used by pipeline)."""
+        self.ensure_source_configs_table()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT sc.*, c.name as collection_name
+                    FROM source_configs sc
+                    LEFT JOIN collections c ON c.id = sc.collection_id
+                    WHERE sc.source_type = %s AND sc.enabled = TRUE
+                    ORDER BY sc.name""",
+                    (source_type,),
+                )
+                return cur.fetchall()
+
+    def update_source_last_run(self, config_id: str):
+        """Update last_run_at timestamp after pipeline processes a source."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE source_configs SET last_run_at = NOW() WHERE id = %s",
+                    (config_id,),
+                )
+            conn.commit()
+
+    def import_sources_from_yaml(self, yaml_path: str) -> int:
+        """Import sources from a YAML file into source_configs table. Returns count imported."""
+        from pathlib import Path
+        import yaml as _yaml
+
+        path = Path(yaml_path)
+        if not path.exists():
+            return 0
+
+        with open(path) as f:
+            data = _yaml.safe_load(f) or {}
+
+        count = 0
+
+        # Web URLs
+        for item in data.get("web", []) or []:
+            if isinstance(item, dict):
+                self.create_source_config(
+                    source_type="web_url",
+                    name=item.get("url", "")[:80],
+                    config={"url": item["url"]},
+                    enabled=item.get("enabled", True),
+                )
+                count += 1
+
+        # YouTube
+        yt = data.get("youtube", {}) or {}
+        if yt.get("watch_later"):
+            self.create_source_config(
+                source_type="youtube_watch_later",
+                name="Watch Later",
+                config={},
+            )
+            count += 1
+        for pl_id in yt.get("playlists", []) or []:
+            self.create_source_config(
+                source_type="youtube_playlist",
+                name=f"Playlist {pl_id[:20]}",
+                config={"playlist_id": pl_id},
+            )
+            count += 1
+        for ch_id in yt.get("channels", []) or []:
+            self.create_source_config(
+                source_type="youtube_channel",
+                name=f"Channel {ch_id[:20]}",
+                config={"channel_id": ch_id, "max_videos": yt.get("channel_max_videos", 5)},
+            )
+            count += 1
+
+        # Reddit
+        rd = data.get("reddit", {}) or {}
+        if rd.get("saved_posts"):
+            self.create_source_config(
+                source_type="reddit_saved",
+                name="Reddit Saved Posts",
+                config={"limit": rd.get("limit", 50)},
+            )
+            count += 1
+
+        # Twitter
+        tw = data.get("twitter", {}) or {}
+        if tw.get("bookmarks"):
+            self.create_source_config(
+                source_type="twitter_bookmarks",
+                name="Twitter Bookmarks",
+                config={"limit": tw.get("limit", 50)},
+            )
+            count += 1
+
+        # Folders
+        folders = data.get("folders", {}) or {}
+        if folders.get("enabled"):
+            for src in folders.get("sources", []) or []:
+                self.create_source_config(
+                    source_type="folder",
+                    name=src.get("path", "").split("/")[-1] or "Folder",
+                    config={
+                        "path": src["path"],
+                        "extensions": src.get("extensions", [".pdf"]),
+                        "max_file_size_mb": src.get("max_file_size_mb", 50),
+                    },
+                )
+                count += 1
+
+        return count
 
     def cleanup_test_data(self):
         if not self._test_ids:
